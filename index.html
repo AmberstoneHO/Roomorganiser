@@ -79,6 +79,11 @@ header h1 small{letter-spacing:3px;text-transform:uppercase;font-size:11px;margi
 dialog{box-shadow:0 24px 70px rgba(0,0,0,.4)}
 form h2{border-bottom:2px solid var(--gold);padding-bottom:10px}
 .legend{text-align:center}
+.cx{padding:0 20px 24px}
+.cx h3{margin:0 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.cxr{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-left:4px solid #b3261e;border-radius:10px;padding:10px 14px;margin-bottom:8px;opacity:.92}
+.cxr b{display:block;text-decoration:line-through;text-decoration-color:#b3261e}
+.cxr span,.cxr em{display:block;font-size:12px;color:var(--muted);font-style:normal}
 </style>
 </head>
 <body>
@@ -104,6 +109,7 @@ form h2{border-bottom:2px solid var(--gold);padding-bottom:10px}
 <div class="stats" id="stats"></div>
 <div class="wrap"><div class="grid" id="grid"></div></div>
 <div class="legend">Click an empty slot to book. Click a booking to edit or cancel. Red line = current time.</div>
+<div class="cx" id="cxl"></div>
 
 <dialog id="dlg">
   <form id="f" method="dialog" onsubmit="return false">
@@ -119,6 +125,7 @@ form h2{border-bottom:2px solid var(--gold);padding-bottom:10px}
       <label>Booked for (host / dept)<input id="host" required></label>
       <label>Attendees<input type="number" id="pax" min="1" value="2" required></label>
     </div>
+    <label>Booked by (your name)<input id="bby" required></label>
     <label>Visitor name / company (optional)<input id="vis"></label>
     <label>Notes (tea, projector, video call)<textarea id="notes" rows="2"></textarea></label>
     <div class="warn" id="warn"></div>
@@ -134,9 +141,9 @@ form h2{border-bottom:2px solid var(--gold);padding-bottom:10px}
 <script>
 // ---- EDIT HERE: room names, capacity, working hours ----
 const ROOMS=[
-  {id:'boardroom',name:'Boardroom',cap:12,color:'#b8923a'},
-  {id:'room6',name:'6 Pax Room',cap:6,color:'#1f7a5c'},
-  {id:'room4',name:'4 Pax Room',cap:4,color:'#3b7ea1'}
+  {id:'boardroom',name:'Manhattan',cap:12,color:'#b8923a'},
+  {id:'room6',name:'Milan',cap:6,color:'#1f7a5c'},
+  {id:'room4',name:'Geneva',cap:4,color:'#3b7ea1'}
 ];
 const START=9,END=19,STEP=30; // 9 AM to 7 PM, 30-min slots
 // --------------------------------------------------------
@@ -174,7 +181,7 @@ function dash(){
 setInterval(dash,30000);
 
 function render(){
-  const d=ymd(cur);$('dp').value=d;dash();
+  const d=ymd(cur);$('dp').value=d;dash();cxList();
   $('dl').textContent=cur.toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const g=$('grid');g.innerHTML='';
   g.appendChild(Object.assign(document.createElement('div'),{className:'hd',innerHTML:'&nbsp;'}));
@@ -211,7 +218,7 @@ function openDlg(b,room,date,m){
   $('date').value=b?b.date:(date||ymd(cur));
   const s=b?mins(b.start):(m??10*60);
   $('st').value=hm(s);$('en').value=b?b.end:hm(Math.min(s+60,END*60));
-  $('title').value=b?b.title:'';$('host').value=b?b.host:'';$('pax').value=b?b.pax:2;
+  $('title').value=b?b.title:'';$('host').value=b?b.host:'';$('bby').value=b?(b.bby||''):(localStorage.getItem('amb-name')||'');$('pax').value=b?b.pax:2;
   $('vis').value=b?b.vis:'';$('notes').value=b?b.notes:'';
   chkCap();$('dlg').showModal();
 }
@@ -219,8 +226,9 @@ function chkCap(){const r=ROOMS.find(x=>x.id===$('room').value);
   $('warn').textContent=(+$('pax').value>r.cap)?'Attendees exceed room capacity ('+r.cap+'). Consider a bigger room.':''}
 async function save(){
   const b={id:editId||crypto.randomUUID(),room:$('room').value,date:$('date').value,start:$('st').value,end:$('en').value,
-    title:$('title').value.trim(),host:$('host').value.trim(),pax:+$('pax').value,vis:$('vis').value.trim(),notes:$('notes').value.trim()};
-  if(!b.title||!b.host||!b.date){$('err').textContent='Please fill title, host and date.';return}
+    title:$('title').value.trim(),host:$('host').value.trim(),bby:$('bby').value.trim(),pax:+$('pax').value,vis:$('vis').value.trim(),notes:$('notes').value.trim()};
+  if(!b.title||!b.host||!b.bby||!b.date){$('err').textContent='Please fill title, host, your name and date.';return}
+  try{localStorage.setItem('amb-name',b.bby)}catch(e){}
   if(mins(b.end)<=mins(b.start)){$('err').textContent='End time must be after start time.';return}
   const clash=bookings.find(x=>x.id!==b.id&&x.room===b.room&&x.date===b.date&&mins(b.start)<mins(x.end)&&mins(b.end)>mins(x.start));
   if(clash){$('err').textContent='Clash with "'+clash.title+'" ('+lbl(mins(clash.start))+' - '+lbl(mins(clash.end))+').';return}
@@ -229,7 +237,24 @@ async function save(){
 }
 $('save').onclick=save;
 $('close').onclick=()=>$('dlg').close();
-$('del').onclick=async()=>{if(confirm('Cancel this booking?')){try{await dbDel(editId)}catch(e){$('err').textContent=e.message;return}$('dlg').close();await load()}};
+$('del').onclick=async()=>{
+  const nm=prompt('Your name (recorded with the cancellation):',localStorage.getItem('amb-name')||'');
+  if(!nm||!nm.trim())return;
+  try{localStorage.setItem('amb-name',nm.trim())}catch(e){}
+  try{await api('/rest/v1/bookings?id=eq.'+editId,{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({status:'cancelled',cancelled_by:nm.trim(),cancelled_at:new Date().toISOString()})})}catch(e){$('err').textContent=e.message;return}
+  $('dlg').close();await load();
+};
+function cxList(){
+  const d=ymd(cur),l=cancelled.filter(b=>b.date===d).sort((a,b)=>a.start.localeCompare(b.start)),el=$('cxl');
+  if(!l.length){el.innerHTML='';return}
+  const rn=id=>(ROOMS.find(r=>r.id===id)||{name:id}).name;
+  el.innerHTML='<h3>Cancelled bookings ('+l.length+')</h3>'+l.map(b=>`<div class="cxr"><div><b>${esc(b.title)}</b><span>${rn(b.room)} | ${lbl(mins(b.start))} - ${lbl(mins(b.end))}</span><em>Booked by ${esc(b.bby||'-')} | Cancelled by ${esc(b.cby||'-')}${b.cat?' at '+new Date(b.cat).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):''}</em></div><button class="btn alt" data-id="${b.id}">Restore</button></div>`).join('');
+}
+$('cxl').onclick=async e=>{
+  const id=e.target.dataset&&e.target.dataset.id;if(!id)return;
+  try{await api('/rest/v1/bookings?id=eq.'+id,{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({status:'active',cancelled_by:null,cancelled_at:null})});await load()}
+  catch(err){alert('Cannot restore: that slot has been booked by someone else.')}
+};
 $('pax').oninput=chkCap;$('room').onchange=chkCap;
 $('prev').onclick=()=>{cur.setDate(cur.getDate()-1);render()};
 $('next').onclick=()=>{cur.setDate(cur.getDate()+1);render()};
@@ -241,6 +266,7 @@ $('tv').onclick=()=>{document.body.classList.toggle('tv')};
 const SB_URL='https://mzcunkxamrflgbptizub.supabase.co';
 const SB_KEY='sb_publishable_Y3bP1Nr-IOW2BK0h1i4PKA_QPS6C-wl';
 // --------------------------------------------------------------
+let cancelled=[];
 let session=null;
 try{session=JSON.parse(localStorage.getItem('amb-sess')||'null')}catch(e){}
 const store=()=>{try{session?localStorage.setItem('amb-sess',JSON.stringify(session)):localStorage.removeItem('amb-sess')}catch(e){}};
@@ -261,12 +287,13 @@ async function load(){
   try{
     const from=ymd(new Date(Date.now()-7*864e5));
     const rows=await api('/rest/v1/bookings'+'?select=*&date=gte.'+from+'&order=date,start_time');
-    bookings=rows.map(x=>({id:x.id,room:x.room,date:x.date,start:x.start_time.slice(0,5),end:x.end_time.slice(0,5),title:x.title,host:x.host||'',pax:x.pax||1,vis:x.visitor||'',notes:x.notes||''}));
+    const mp=x=>({id:x.id,room:x.room,date:x.date,start:x.start_time.slice(0,5),end:x.end_time.slice(0,5),title:x.title,host:x.host||'',bby:x.booked_by||'',cby:x.cancelled_by||'',cat:x.cancelled_at||'',pax:x.pax||1,vis:x.visitor||'',notes:x.notes||''});
+    bookings=rows.filter(x=>x.status!=='cancelled').map(mp);cancelled=rows.filter(x=>x.status==='cancelled').map(mp);
     setFs('Live'+' | updated '+hhmm());render();
   }catch(e){setFs('Cannot reach server - retrying')}
 }
 async function dbSave(b){
-  await api('/rest/v1/bookings',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:b.id,room:b.room,date:b.date,start_time:b.start,end_time:b.end,title:b.title,host:b.host,pax:b.pax,visitor:b.vis,notes:b.notes})});
+  await api('/rest/v1/bookings',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:b.id,room:b.room,date:b.date,start_time:b.start,end_time:b.end,title:b.title,host:b.host,booked_by:b.bby,pax:b.pax,visitor:b.vis,notes:b.notes})});
 }
 const dbDel=id=>api('/rest/v1/bookings?id=eq.'+id,{method:'DELETE'});
 function updBtn(){}
